@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
 import fitz  # PyMuPDF
+import subprocess
 
 class PDFVectorComparator:
     def __init__(self, root):
@@ -29,7 +30,7 @@ class PDFVectorComparator:
         self.root.geometry("500x400")
 
         # Label principal
-        main_label = ttk.Label(self.root, text="Outil de comparaison de PDF", font=("Arial", 14, "bold"))
+        main_label = ttk.Label(self.root, text="Comparaison de PDF", font=("Arial", 14, "bold"))
         main_label.pack(pady=10)
 
         # Cadre pour les sélections de fichiers
@@ -65,7 +66,7 @@ class PDFVectorComparator:
         ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100).pack(side=tk.LEFT, fill='x', expand=True, padx=5)
 
         # Pied de page
-        footer = ttk.Label(self.root, text="Développé pour la comparaison vectorielle", font=("Arial", 10),
+        footer = ttk.Label(self.root, text="Version beta 01", font=("Arial", 10),
                            anchor="center")
         footer.pack(side="bottom", pady=5)
 
@@ -118,7 +119,7 @@ class PDFVectorComparator:
         messagebox.showinfo("Info", "Alignement réinitialisé.")
 
     def highlight_differences(self, page_num):
-        """Crée une image PNG mettant en évidence les pixels différents entre deux PDF, avec alignement automatique."""
+        """Crée une image PNG de meilleure qualité en mettant en évidence les pixels différents entre deux PDF, avec alignement automatique."""
         try:
             # Charger les deux PDF
             doc1 = fitz.open(self.pdf1_path)
@@ -129,12 +130,14 @@ class PDFVectorComparator:
                 print(f"La page {page_num + 1} n'existe pas dans l'un des documents.")
                 return
 
-            # Récupérer les images des pages
+            # Récupérer les images des pages avec une haute résolution
             page1 = doc1[page_num]
             page2 = doc2[page_num]
 
-            pix1 = page1.get_pixmap()
-            pix2 = page2.get_pixmap()
+            # Augmenter la résolution de l'image avec un facteur de 2 (vous pouvez ajuster ce facteur)
+            zoom_matrix = fitz.Matrix(2, 2)  # Zoom factor de 2
+            pix1 = page1.get_pixmap(matrix=zoom_matrix)
+            pix2 = page2.get_pixmap(matrix=zoom_matrix)
 
             # Convertir les images en tableaux NumPy
             img1 = np.frombuffer(pix1.samples, dtype=np.uint8).reshape(pix1.height, pix1.width, pix1.n)
@@ -167,10 +170,6 @@ class PDFVectorComparator:
             # Calculer la transformation homographique
             matrix, mask = cv2.findHomography(points2, points1, cv2.RANSAC, 5.0)
 
-            if mask.sum() < len(mask) * 0.5:  # Si moins de 50 % des points sont valides
-                print("Alignement insuffisant pour la page", page_num + 1)
-                return
-
             # Appliquer la transformation pour aligner img2 sur img1
             height, width = img1.shape[:2]
             aligned_img2 = cv2.warpPerspective(img2, matrix, (width, height))
@@ -179,7 +178,7 @@ class PDFVectorComparator:
             diff = cv2.absdiff(img1, aligned_img2)
 
             # Tolérance fixe
-            tolerance = 100  # Ajustez cette valeur pour la sensibilité
+            tolerance = 115  # Ajustez cette valeur pour la sensibilité
             diff_mask = np.any(diff > tolerance, axis=2)
 
             # Mettre en évidence les pixels différents (ici en rouge)
@@ -190,8 +189,19 @@ class PDFVectorComparator:
             save_dir = os.path.join(os.getcwd(), "results")
             os.makedirs(save_dir, exist_ok=True)
             save_path = os.path.join(save_dir, f"page_{page_num + 1}_differences.png")
-            cv2.imwrite(save_path, img_highlighted)
+
+            # Utiliser une meilleure compression sans perte pour PNG
+            cv2.imwrite(save_path, img_highlighted, [cv2.IMWRITE_PNG_COMPRESSION, 0])  # Compression sans perte
             print(f"Image sauvegardée : {save_path}")
+
+            # Ouvrir automatiquement le fichier PNG selon le système d'exploitation
+            if os.name == 'nt':  # Windows
+                os.startfile(save_path)
+            elif os.name == 'posix':  # macOS ou Linux
+                try:
+                    subprocess.Popen(["open", save_path])  # macOS
+                except FileNotFoundError:
+                    subprocess.Popen(["xdg-open", save_path])  # Linux
 
         except Exception as e:
             print(f"Erreur lors de la génération de l'image : {e}")
